@@ -1,6 +1,7 @@
 package com.bmanchi.mymemory
 
 import android.animation.ArgbEvaluator
+import android.app.Activity
 import android.content.Intent
 import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
@@ -18,8 +19,12 @@ import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.bmanchi.mymemory.models.BoardSize
 import com.bmanchi.mymemory.models.MemoryGame
+import com.bmanchi.mymemory.models.UserImageList
 import com.bmanchi.mymemory.utils.EXTRA_BOARD_SIZE
+import com.bmanchi.mymemory.utils.EXTRA_GAME_NAME
 import com.google.android.material.snackbar.Snackbar
+import com.google.firebase.firestore.ktx.firestore
+import com.google.firebase.ktx.Firebase
 
 private const val TAG = "MainActivity"
 private const val CREATE_REQUEST_CODE = 1832
@@ -32,6 +37,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvNumMoves: TextView
     private lateinit var tvNumPairs: TextView
     private lateinit var adapter: MemoryBoardAdapter
+
+    private val db = Firebase.firestore
+    private var gameName: String? = null
+    private var customGameImages: List<String>? = null
 
     private var boardSize: BoardSize = BoardSize.EASY
 
@@ -77,6 +86,36 @@ class MainActivity : AppCompatActivity() {
         return super.onOptionsItemSelected(item)
     }
 
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if  (requestCode == CREATE_REQUEST_CODE && resultCode == Activity.RESULT_OK) {
+            val customGameName = data?.getStringExtra(EXTRA_GAME_NAME)
+            if (customGameName == null) {
+                Log.e(TAG,"Got null custom game from CreateActivity")
+                return
+            }
+            downloadGame(customGameName)
+        }
+        super.onActivityResult(requestCode, resultCode, data)
+    }
+
+    private fun downloadGame(customGameName: String) {
+        db.collection("games").document(customGameName).get().addOnSuccessListener { document ->
+            val userImageList = document.toObject(UserImageList::class.java)
+            if (userImageList?.images == null) {
+                Log.e(TAG, "Invalid custom game data from Firestore")
+                Snackbar.make(clRoot, "Sorry, we couldn't find any such game, '$customGameName'", Snackbar.LENGTH_LONG).show()
+                return@addOnSuccessListener
+            }
+            val numCards = userImageList.images.size * 2
+            boardSize = BoardSize.getByValue(numCards)
+            customGameImages = userImageList.images
+            setUpGame()
+            gameName = customGameName
+        }.addOnFailureListener { exception ->
+            Log.e(TAG, "Exception when retrieving game", exception)
+        }
+    }
+
     private fun showCreationDialog() {
         val boardSizeView = LayoutInflater.from(this).inflate(R.layout.dialog_board_size, null)
         val radioGroupSize = boardSizeView.findViewById<RadioGroup>(R.id.radioGroup)
@@ -110,6 +149,8 @@ class MainActivity : AppCompatActivity() {
                 R.id.rbMedium -> BoardSize.MEDIUM
                 else -> BoardSize.HARD
             }
+            gameName = null
+            customGameImages = null
             setUpGame()
         })
     }
@@ -125,6 +166,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setUpGame() {
+        supportActionBar?.title = gameName ?: getString(R.string.app_name )
         when (boardSize){
             BoardSize.EASY -> {
                 tvNumPairs.text = "Pairs: 0 / 4"
@@ -140,7 +182,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        memoryGame = MemoryGame(boardSize)
+        memoryGame = MemoryGame(boardSize, customGameImages)
 
         adapter = MemoryBoardAdapter(this, boardSize, memoryGame.cards, object : MemoryBoardAdapter.CardClickListener{
             override fun onCardClicked(position: Int) {
